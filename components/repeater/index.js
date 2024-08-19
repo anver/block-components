@@ -1,29 +1,13 @@
 import { useBlockEditContext, store as blockEditorStore } from '@wordpress/block-editor';
 import { store as blocksStore } from '@wordpress/blocks';
 import { useSelect, dispatch } from '@wordpress/data';
-import { cloneElement } from '@wordpress/element';
+import { cloneElement, forwardRef, useEffect } from '@wordpress/element';
 import { Button } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
 import { v4 as uuid } from 'uuid';
 
-import {
-	DndContext,
-	closestCenter,
-	KeyboardSensor,
-	PointerSensor,
-	useSensor,
-	useSensors,
-} from '@dnd-kit/core';
-import {
-	arrayMove,
-	SortableContext,
-	sortableKeyboardCoordinates,
-	verticalListSortingStrategy,
-	useSortable,
-} from '@dnd-kit/sortable';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { CSS } from '@dnd-kit/utilities';
 import { DragHandle } from '../drag-handle';
+import { useSortable } from './hooks';
 
 /**
  * The Sortable Item Component.
@@ -36,37 +20,40 @@ import { DragHandle } from '../drag-handle';
  * @param {string} props.id A string identifier for a repeater item.
  * @returns {*} React JSX
  */
-const SortableItem = ({ children, item = {}, setItem = null, removeItem = null, id = '' }) => {
-	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-		id,
-	});
-
-	const style = {
-		transform: CSS.Transform.toString(transform),
-		transition,
-		display: 'flex',
-		zIndex: isDragging ? 999 : 1,
-		position: 'relative',
-	};
-
-	const repeaterItem = children(item, id, setItem, removeItem);
-	const clonedRepeaterChild = cloneElement(
-		repeaterItem,
+const SortableItem = forwardRef(
+	(
 		{
-			ref: setNodeRef,
-			style,
-			className: isDragging
-				? `${repeaterItem.props.className} repeater-item--is-dragging`
-				: repeaterItem.props.className,
+			children,
+			item = {},
+			setItem = null,
+			removeItem = null,
+			id = '',
+			index,
+			onDragStart,
+			onDragOver,
+			onDragEnd,
 		},
-		[
-			<DragHandle className="repeater-item__drag-handle" {...attributes} {...listeners} />,
-			repeaterItem.props.children,
-		],
-	);
+		ref,
+	) => {
+		const repeaterItem = children(item, id, setItem, removeItem);
+		const clonedRepeaterChild = cloneElement(
+			repeaterItem,
+			{
+				ref,
+				onDragStart: (e) => onDragStart(e, index),
+				onDragOver: (e) => onDragOver(e, index),
+				onDragEnd: () => onDragEnd(),
+				draggable: true,
+				style: {
+					transition: `transform 0.1s`,
+				},
+			},
+			[<DragHandle className="repeater-item__drag-handle" />, repeaterItem.props.children],
+		);
 
-	return clonedRepeaterChild;
-};
+		return clonedRepeaterChild;
+	},
+);
 
 /**
  * The Repeater Component.
@@ -88,28 +75,6 @@ export const AbstractRepeater = ({
 	value,
 	defaultValue = [],
 }) => {
-	const sensors = useSensors(
-		useSensor(PointerSensor),
-		useSensor(KeyboardSensor, {
-			coordinateGetter: sortableKeyboardCoordinates,
-		}),
-	);
-
-	function handleDragEnd(event) {
-		const { active, over } = event;
-
-		if (active.id !== over.id) {
-			const moveArray = (items) => {
-				const oldIndex = items.findIndex((item) => item.id === active.id);
-				const newIndex = items.findIndex((item) => item.id === over.id);
-
-				return arrayMove(items, oldIndex, newIndex);
-			};
-
-			onChange(moveArray(value));
-		}
-	}
-
 	/**
 	 * Adds a new repeater item.
 	 */
@@ -163,50 +128,50 @@ export const AbstractRepeater = ({
 		onChange(valueCopy);
 	}
 
-	const itemIds = value.map((item) => item.id);
+	const { items, allDraggables, onDragStart, onDragOver, onDragEnd } = useSortable(value);
+
+	useEffect(() => {
+		onChange(items);
+	}, [items]);
 
 	return (
 		<>
-			{allowReordering ? (
-				<DndContext
-					sensors={sensors}
-					collisionDetection={closestCenter}
-					onDragEnd={(e) => handleDragEnd(e)}
-					modifiers={[restrictToVerticalAxis]}
-				>
-					<SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-						{value.map((item, key) => {
-							return (
-								<SortableItem
-									item={item}
-									setItem={(val) => setItem(val, key)}
-									removeItem={() => removeItem(key)}
-									key={item.id}
-									id={item.id}
-								>
-									{(item, id, setItem, removeItem) => {
-										return children(
-											item,
-											id,
-											(val) => setItem(val, key),
-											() => removeItem(key),
-										);
-									}}
-								</SortableItem>
-							);
-						})}
-					</SortableContext>
-				</DndContext>
-			) : (
-				value.map((item, key) => {
-					return children(
-						item,
-						item.id,
-						(val) => setItem(val, key),
-						() => removeItem(key),
-					);
-				})
-			)}
+			{allowReordering
+				? items.map((item, key) => {
+						return (
+							<SortableItem
+								item={item}
+								setItem={(val) => setItem(val, key)}
+								removeItem={() => removeItem(key)}
+								key={item.id}
+								id={item.id}
+								ref={function (el) {
+									allDraggables.current[key] = el;
+								}}
+								index={key}
+								onDragStart={onDragStart}
+								onDragOver={onDragOver}
+								onDragEnd={onDragEnd}
+							>
+								{(item, id, setItem, removeItem) => {
+									return children(
+										item,
+										id,
+										(val) => setItem(val, key),
+										() => removeItem(key),
+									);
+								}}
+							</SortableItem>
+						);
+					})
+				: value.map((item, key) => {
+						return children(
+							item,
+							item.id,
+							(val) => setItem(val, key),
+							() => removeItem(key),
+						);
+					})}
 			{typeof addButton === 'function' ? (
 				addButton(addItem)
 			) : (

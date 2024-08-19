@@ -9,7 +9,7 @@
 	"source": "index.ts",
 	"types": "./dist/index.d.ts",
 	"scripts": {
-		"lint": "10up-toolkit lint-js",
+		"lint": "10up-toolkit lint-js --fix",
 		"test": "10up-toolkit test-unit-jest",
 		"build": "npm run clean-dist && 10up-toolkit build",
 		"start": "10up-toolkit start",
